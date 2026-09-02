@@ -1,4 +1,16 @@
 /**
+ * 失敗の種類ごとの待ち時間。
+ * 通信の一時的な失敗はすぐ、レート制限は長めに、認証エラーはその中間。
+ */
+function backoffFor(message) {
+	if (/\b429\b/.test(message)) return 300_000;
+	if (/UNAUTHORIZED|NO_TOKEN|NO_AUTH|SCOPE/.test(message)) return 60_000;
+
+	// スリープ復帰直後など、ネットワークがまだ上がっていないだけのことが多い
+	return 20_000;
+}
+
+/**
  * 使用量の取得をまとめる小さなサービス。
  * キーが何枚置かれても取得は 1 本にまとめ、結果を購読者へ配る。
  */
@@ -79,9 +91,10 @@ export class UsageService {
 				const message = err?.message ?? String(err);
 				this.logger?.warn(`usage fetch failed: ${message}`);
 
-				// 連続失敗でエンドポイントを叩き続けないよう少し待つ
-				this.#backoffUntil = Date.now() + (/\b429\b/.test(message) ? 300_000 : 60_000);
-				this.state = { ...this.state, status: "error", error: message };
+				this.#backoffUntil = Date.now() + backoffFor(message);
+
+				// 前回の値は捨てない。取れているならそれを「古い値」として出し続ける。
+				this.state = { ...this.state, status: "error", stale: true, error: message };
 			} finally {
 				this.#inflight = null;
 			}

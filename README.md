@@ -90,6 +90,10 @@ leaves your machine.
 | `RATE LIMITED` | Too many requests; the plugin backs off for 5 minutes |
 | `OFFLINE` | The request failed; it retries on the next tick |
 
+If a refresh fails after the key has already shown numbers, the last known values stay
+on screen with a `*` next to the title rather than being replaced by an error. After 30
+minutes without a successful refresh, the key switches to the reason instead.
+
 Plugin logs live in `com.yuya.claudeusage.sdPlugin/logs/`.
 
 ## License

@@ -7,6 +7,9 @@ import { messageDataUri, usageDataUri } from "./render.js";
 /** これより長く押したらアプリ起動とみなす */
 const LONG_PRESS_MS = 500;
 
+/** 失敗が続いてこれ以上古くなったら、数字を出すのをやめて理由を出す */
+const STALE_LIMIT_MS = 30 * 60_000;
+
 const DEFAULTS = {
 	pollInterval: 120,
 	displayMode: "remaining", // remaining | used
@@ -149,7 +152,11 @@ export class UsageAction extends SingletonAction {
 	async render(entry, state) {
 		const { action, settings } = entry;
 
-		if (state.status === "error" || (state.status === "init" && state.session == null)) {
+		// 一度でも取れていれば、失敗中でも最後の値を出し続ける（ヘッダーの * が目印）。
+		// ただし古くなりすぎたら、黙って嘘の数字を出すより理由を見せる。
+		const tooOld = state.status === "error" && state.fetchedAt != null && Date.now() - state.fetchedAt > STALE_LIMIT_MS;
+
+		if (state.session == null || tooOld) {
 			const lines = state.status === "error" ? this.describeError(state.error ?? "") : ["...", ""];
 			await action.setImage(messageDataUri({ title: this.title, accent: this.accent, lines }));
 			return;
