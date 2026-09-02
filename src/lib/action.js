@@ -98,6 +98,28 @@ export class UsageAction extends SingletonAction {
 	onKeyDown(ev) {
 		const entry = this.keys.get(ev.action.id);
 		if (entry) entry.pressedAt = Date.now();
+
+		const state = this.service.state;
+		this.service.logger?.info(`keyDown: status=${state.status} error=${state.error ?? "-"} needsLogin=${this.needsLogin()}`);
+
+		// ログインが切れているときは、離すのを待たずにその場でログイン手段を出す
+		if (this.needsLogin()) {
+			if (entry) entry.handled = true;
+			this.signIn(entry?.settings);
+			void ev.action.showOk();
+		}
+	}
+
+	/** ログイン用のターミナルを開く */
+	signIn(settings) {
+		const command = settings?.loginCommand || this.recovery.command;
+
+		try {
+			const result = launchTerminal(command);
+			this.service.logger?.info(`sign-in terminal: ${result.how} (${command})`);
+		} catch (err) {
+			this.service.logger?.error(`sign-in terminal failed: ${err?.message ?? err}`);
+		}
 	}
 
 	async onKeyUp(ev) {
@@ -105,9 +127,14 @@ export class UsageAction extends SingletonAction {
 		const settings = entry?.settings ?? normalizeSettings(ev.payload?.settings, this.extraDefaults);
 		const held = entry?.pressedAt ? Date.now() - entry.pressedAt : 0;
 
-		// ログインが切れているときは、まずそれを直せるようにする
+		// 押した時点で処理済みなら何もしない
+		if (entry?.handled) {
+			entry.handled = false;
+			return;
+		}
+
 		if (this.needsLogin()) {
-			launchTerminal(settings.loginCommand || this.recovery.command);
+			this.signIn(settings);
 			await ev.action.showOk();
 			return;
 		}
@@ -119,9 +146,10 @@ export class UsageAction extends SingletonAction {
 
 		if (settings.pressAction !== "refresh") {
 			try {
-				launch(this.appKind, settings.launchCommand);
+				const result = launch(this.appKind, settings.launchCommand);
+				this.service.logger?.info(`launch app: ${result.how}`);
 			} catch (err) {
-				this.service.logger?.error("launch failed", err);
+				this.service.logger?.error(`launch failed: ${err?.message ?? err}`);
 				await ev.action.showAlert();
 			}
 		}

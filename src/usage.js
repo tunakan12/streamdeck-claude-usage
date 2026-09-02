@@ -31,21 +31,32 @@ function readCredentials() {
  * 期限切れのときだけリフレッシュし、結果を同じファイルに書き戻す。
  * 書き戻さないと Claude Code 側のリフレッシュトークンが無効になるため、ここは必須。
  */
-async function refreshCredentials(entry) {
+async function refreshCredentials(entry, logger) {
 	const oauth = entry.raw.claudeAiOauth;
-	if (!oauth?.refreshToken) return null;
+	if (!oauth?.refreshToken) {
+		logger?.warn("token refresh: no refresh token in credentials");
+		return null;
+	}
 
 	const res = await fetch(TOKEN_URL, {
 		method: "POST",
-		headers: { "Content-Type": "application/json", "User-Agent": UA },
+		headers: { "Content-Type": "application/json", "User-Agent": "anthropic" },
 		body: JSON.stringify({ grant_type: "refresh_token", refresh_token: oauth.refreshToken, client_id: CLIENT_ID }),
 		signal: AbortSignal.timeout(15_000),
 	});
 
-	if (!res.ok) return null;
+	if (!res.ok) {
+		// 次に同じことが起きたとき原因が分かるように、理由を残す
+		const body = await res.text().catch(() => "");
+		logger?.warn(`token refresh: HTTP ${res.status} ${body.slice(0, 200)}`);
+		return null;
+	}
 
 	const json = await res.json();
-	if (!json?.access_token) return null;
+	if (!json?.access_token) {
+		logger?.warn("token refresh: response had no access_token");
+		return null;
+	}
 
 	entry.raw.claudeAiOauth = {
 		...oauth,
@@ -60,22 +71,30 @@ async function refreshCredentials(entry) {
 	writeFileSync(tmp, JSON.stringify(entry.raw, null, 2), { mode: 0o600 });
 	renameSync(tmp, entry.file);
 
+	logger?.info(`token refresh: ok, valid for ${Math.round(Number(json.expires_in ?? 3600) / 60)} min`);
+
 	return entry.raw.claudeAiOauth.accessToken;
 }
 
-/** Claude Code のログイン情報からアクセストークンを取る（必要ならリフレッシュ） */
-async function tokenFromCredentials() {
+/**
+ * Claude Code のログイン情報からアクセストークンを取る（必要ならリフレッシュ）。
+ * 「認証情報が無い」のか「あるが更新に失敗した」のかを呼び出し側に伝える。
+ */
+async function tokenFromCredentials(logger) {
 	const entry = readCredentials();
-	if (!entry) return null;
+	if (!entry) return { token: null, hadCredentials: false };
 
 	const oauth = entry.raw.claudeAiOauth;
 	const alive = !Number.isFinite(oauth.expiresAt) || oauth.expiresAt > Date.now() + 60_000;
-	if (alive) return oauth.accessToken;
+	if (alive) return { token: oauth.accessToken, hadCredentials: true };
+
+	logger?.info("access token expired, refreshing");
 
 	try {
-		return await refreshCredentials(entry);
-	} catch {
-		return null;
+		return { token: await refreshCredentials(entry, logger), hadCredentials: true };
+	} catch (err) {
+		logger?.warn(`token refresh threw: ${err?.message ?? err}`);
+		return { token: null, hadCredentials: true };
 	}
 }
 
@@ -166,7 +185,7 @@ async function requestUsage(token) {
  * 手入力トークン → Claude Code のログイン情報、の順に試す。
  * @param {string|null} manualToken
  */
-export async function getClaudeUsage(manualToken) {
+export async function getClaudeUsage(manualToken, logger) {
 	const manual = (manualToken ?? "").trim();
 	let firstError = null;
 
@@ -179,9 +198,11 @@ export async function getClaudeUsage(manualToken) {
 		}
 	}
 
-	const token = await tokenFromCredentials();
+	const { token, hadCredentials } = await tokenFromCredentials(logger);
 	if (token && token !== manual) return await requestUsage(token);
 
 	if (firstError) throw new Error(firstError.scopeProblem ? "SCOPE" : "UNAUTHORIZED");
-	throw new Error("NO_TOKEN");
+
+	// 認証情報はあるのに使えない = 期限切れ。まだ一度もログインしていないのとは区別する。
+	throw new Error(hadCredentials ? "UNAUTHORIZED" : "NO_TOKEN");
 }

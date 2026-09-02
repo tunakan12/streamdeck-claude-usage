@@ -9,7 +9,7 @@ streamDeck.logger.setLevel("info");
 /** Property Inspector に入力されたトークン（空なら Claude Code のログイン情報を使う） */
 let manualToken = "";
 
-const service = new UsageService(() => getClaudeUsage(manualToken), streamDeck.logger);
+const service = new UsageService(() => getClaudeUsage(manualToken, streamDeck.logger), streamDeck.logger);
 service.configure = (settings) => {
 	manualToken = settings.apiToken ?? "";
 };

@@ -49,24 +49,14 @@ const STORE_APP = {
 	chatgpt: "shell:appsFolder\\OpenAI.ChatGPT-Desktop_2p2nqsd0c76g0!App",
 };
 
-/** ログインし直すためのターミナルを開く。Windows Terminal → PowerShell 7 → Windows PowerShell の順。 */
+/** ログインし直すためのターミナルを開く。PowerShell 7 があればそれ、無ければ Windows PowerShell。 */
 export function launchTerminal(command) {
-	const candidates = [
-		path.join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WindowsApps", "wt.exe"),
-		path.join(PROGRAMFILES, "PowerShell", "7", "pwsh.exe"),
-	];
+	const pwsh = path.join(PROGRAMFILES, "PowerShell", "7", "pwsh.exe");
+	const exe = existsSync(pwsh) ? `"${pwsh}"` : "powershell.exe";
 
-	for (const exe of candidates) {
-		if (!existsSync(exe)) continue;
+	shellRun(`start "Sign in" ${exe} -NoExit -Command "${command}"`);
 
-		if (exe.endsWith("wt.exe")) shellRun(`start "" "${exe}" pwsh.exe -NoExit -Command "${command}"`);
-		else shellRun(`start "" "${exe}" -NoExit -Command "${command}"`);
-
-		return { ok: true, how: exe };
-	}
-
-	shellRun(`start "" powershell.exe -NoExit -Command "${command}"`);
-	return { ok: true, how: "powershell" };
+	return { ok: true, how: exe };
 }
 
 /**
