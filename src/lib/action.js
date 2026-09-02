@@ -1,7 +1,7 @@
 import { SingletonAction } from "@elgato/streamdeck";
 
 import { formatRemaining, remainingSeconds } from "./format.js";
-import { launch } from "./launcher.js";
+import { launch, launchTerminal } from "./launcher.js";
 import { messageDataUri, usageDataUri } from "./render.js";
 
 /** これより長く押したらアプリ起動とみなす */
@@ -16,6 +16,7 @@ const DEFAULTS = {
 	pressAction: "cycle", // cycle | open | refresh | both
 	weeklyScope: "all",
 	launchCommand: "",
+	loginCommand: "",
 };
 
 export function normalizeSettings(raw, extra = {}) {
@@ -29,6 +30,7 @@ export function normalizeSettings(raw, extra = {}) {
 	if (s.displayMode !== "used") s.displayMode = "remaining";
 	if (!["cycle", "open", "refresh", "both"].includes(s.pressAction)) s.pressAction = DEFAULTS.pressAction;
 	s.launchCommand = String(s.launchCommand ?? "");
+	s.loginCommand = String(s.loginCommand ?? "");
 
 	return s;
 }
@@ -41,7 +43,7 @@ export function normalizeSettings(raw, extra = {}) {
  * didReceiveSettings が返ってきて再描画 → 無限ループになるため。
  */
 export class UsageAction extends SingletonAction {
-	constructor({ manifestId, title, accent, appKind, service, extraDefaults = {}, describeError }) {
+	constructor({ manifestId, title, accent, appKind, service, extraDefaults = {}, describeError, recovery }) {
 		super();
 		this.manifestId = manifestId;
 		this.title = title;
@@ -50,6 +52,8 @@ export class UsageAction extends SingletonAction {
 		this.service = service;
 		this.extraDefaults = extraDefaults;
 		this.describeError = describeError ?? (() => ["ERROR"]);
+		/** 認証切れのとき、キーを押したらログイン用のターミナルを開く */
+		this.recovery = recovery ?? null;
 
 		/** @type {Map<string, {action:any, settings:any, unsubscribe:() => void}>} */
 		this.keys = new Map();
@@ -101,6 +105,13 @@ export class UsageAction extends SingletonAction {
 		const settings = entry?.settings ?? normalizeSettings(ev.payload?.settings, this.extraDefaults);
 		const held = entry?.pressedAt ? Date.now() - entry.pressedAt : 0;
 
+		// ログインが切れているときは、まずそれを直せるようにする
+		if (this.needsLogin()) {
+			launchTerminal(settings.loginCommand || this.recovery.command);
+			await ev.action.showOk();
+			return;
+		}
+
 		// 表示切替モードでは、短押しで下段を切り替え、長押し（0.5秒〜）でアプリを起動する
 		if (settings.pressAction === "cycle" && held < LONG_PRESS_MS && entry) {
 			if (this.cycleScope(entry)) return;
@@ -134,6 +145,20 @@ export class UsageAction extends SingletonAction {
 		return true;
 	}
 
+	/** 数字ではなく理由を出している状態か（描画側と同じ判定を使う） */
+	showingError(state) {
+		if (state.status !== "error" && state.session != null) return false;
+		if (state.session == null) return true;
+
+		return state.fetchedAt != null && Date.now() - state.fetchedAt > STALE_LIMIT_MS;
+	}
+
+	/** いまログインし直しが必要な状態か */
+	needsLogin() {
+		const state = this.service.state;
+		return Boolean(this.recovery && this.showingError(state) && this.recovery.match.test(state.error ?? ""));
+	}
+
 	/** サービス側（取得間隔・トークンなど）へ設定を渡す */
 	apply(settings) {
 		this.service.configure?.(settings);
@@ -154,9 +179,7 @@ export class UsageAction extends SingletonAction {
 
 		// 一度でも取れていれば、失敗中でも最後の値を出し続ける（ヘッダーの * が目印）。
 		// ただし古くなりすぎたら、黙って嘘の数字を出すより理由を見せる。
-		const tooOld = state.status === "error" && state.fetchedAt != null && Date.now() - state.fetchedAt > STALE_LIMIT_MS;
-
-		if (state.session == null || tooOld) {
+		if (this.showingError(state)) {
 			const lines = state.status === "error" ? this.describeError(state.error ?? "") : ["...", ""];
 			await action.setImage(messageDataUri({ title: this.title, accent: this.accent, lines }));
 			return;

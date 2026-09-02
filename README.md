@@ -57,6 +57,7 @@ the key at a different account's OAuth token.
 | Display | Remaining % | Switch to Used % if you prefer counting up |
 | On press | Short = switch / long = launch | Or: launch + refresh, launch only, refresh only |
 | Launch command | empty | Auto‑detects the Claude desktop app; set this to open something else |
+| Login command | empty | Run when you press the key while it shows a login error; defaults to `claude` |
 
 ## Build from source
 
@@ -84,9 +85,9 @@ leaves your machine.
 
 | Key shows | Meaning |
 | --- | --- |
-| `NO LOGIN` | No credentials found — run `claude` and log in |
-| `BAD SCOPE` | The token in the settings lacks `user:profile` — clear it |
-| `AUTH EXPIRED` | Refresh failed — run `claude` and log in again |
+| `NO LOGIN` | No credentials found — **press the key** to open a terminal running `claude` |
+| `BAD SCOPE` | The token in the settings lacks `user:profile` — clear it, then press the key |
+| `AUTH EXPIRED` | Refresh failed — **press the key** to open a terminal running `claude` |
 | `RATE LIMITED` | Too many requests; the plugin backs off for 5 minutes |
 | `OFFLINE` | The request failed; it retries on the next tick |
 

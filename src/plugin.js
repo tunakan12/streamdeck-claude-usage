@@ -15,12 +15,15 @@ service.configure = (settings) => {
 };
 
 function describeError(message) {
-	if (message.includes("NO_TOKEN")) return ["NO LOGIN", "run: claude", "and log in"];
-	if (message.includes("SCOPE")) return ["BAD SCOPE", "clear token,", "run: claude"];
-	if (message.includes("UNAUTHORIZED")) return ["AUTH", "EXPIRED", "run: claude"];
+	if (message.includes("NO_TOKEN")) return ["NO LOGIN", "press key", "to sign in"];
+	if (message.includes("SCOPE")) return ["BAD SCOPE", "clear token,", "press key"];
+	if (message.includes("UNAUTHORIZED")) return ["AUTH EXPIRED", "press key", "to sign in"];
 	if (message.includes("429")) return ["RATE", "LIMITED"];
 	return ["OFFLINE", "retrying"];
 }
+
+/** 認証が切れているときは、押したら claude を開いてその場でログインできるようにする */
+const recovery = { match: /NO_TOKEN|UNAUTHORIZED|SCOPE/, command: "claude" };
 
 streamDeck.actions.registerAction(
 	new UsageAction({
@@ -31,6 +34,7 @@ streamDeck.actions.registerAction(
 		service,
 		extraDefaults: { pollInterval: 180, apiToken: "" },
 		describeError,
+		recovery,
 	}),
 );
 
