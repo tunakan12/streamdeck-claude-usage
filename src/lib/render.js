@@ -58,9 +58,13 @@ function block({ top, label, remaining, resetText, showUsed }) {
 	const value = remaining == null ? null : showUsed ? 100 - remaining : remaining;
 	const valueText = value == null ? "--" : `${Math.round(value)}%`;
 
+	// ラベルが長いほど小さく。数字と重ならないよう、数字の側も一段落とす。
+	const labelSize = label.length > 6 ? 12 : label.length > 4 ? 14 : 18;
+	const valueSize = label.length > 4 && valueText.length > 3 ? 23 : label.length > 4 ? 26 : 29;
+
 	return [
-		text(label, { x: 8, y: top + 20, size: label.length > 4 ? 14 : 18, weight: 700, fill: COL.label }),
-		text(valueText, { x: CANVAS - 8, y: top + 22, size: label.length > 4 ? 26 : 29, weight: 700, fill: color, anchor: "end" }),
+		text(label, { x: 8, y: top + 20, size: labelSize, weight: 700, fill: COL.label }),
+		text(valueText, { x: CANVAS - 8, y: top + 22, size: valueSize, weight: 700, fill: color, anchor: "end" }),
 		bar(top + 29, remaining == null ? 0 : remaining / 100, color),
 		text(resetText, { x: CANVAS - 8, y: top + 53, size: 15, fill: COL.sub, anchor: "end" }),
 	].join("");
