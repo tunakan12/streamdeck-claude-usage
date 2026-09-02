@@ -1,0 +1,44 @@
+{
+	"$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+	"UUID": "com.yuya.claudeusage",
+	"Name": "Claude Usage",
+	"Version": "1.1.0.0",
+	"Author": "yuya",
+	"Description": "Claude の 5 時間ウィンドウと週ウィンドウの残量、そしてリセットまでの残り時間をキーに表示します。押すと Claude デスクトップアプリを起動します。",
+	"Icon": "imgs/plugin/marketplace",
+	"Category": "Claude Usage",
+	"CategoryIcon": "imgs/plugin/category-icon",
+	"CodePath": "bin/plugin.js",
+	"Nodejs": {
+		"Version": "20"
+	},
+	"SDKVersion": 2,
+	"Software": {
+		"MinimumVersion": "6.6"
+	},
+	"OS": [
+		{
+			"Platform": "windows",
+			"MinimumVersion": "10"
+		}
+	],
+	"Actions": [
+		{
+			"UUID": "com.yuya.claudeusage.limits",
+			"Name": "Claude 残量",
+			"Tooltip": "Claude の 5 時間 / 週の残量とリセットまでの時間を表示します。押すと Claude を起動。",
+			"Icon": "imgs/actions/usage/icon",
+			"Controllers": [
+				"Keypad"
+			],
+			"PropertyInspectorPath": "ui/usage.html",
+			"States": [
+				{
+					"Image": "imgs/actions/usage/key",
+					"TitleAlignment": "bottom",
+					"ShowTitle": false
+				}
+			]
+		}
+	]
+}

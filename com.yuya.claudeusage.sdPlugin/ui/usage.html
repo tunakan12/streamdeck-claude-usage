@@ -1,0 +1,74 @@
+<!doctype html>
+<html>
+	<head lang="ja">
+		<meta charset="utf-8" />
+		<script src="https://sdpi-components.dev/releases/v4/sdpi-components.js"></script>
+		<style>
+			.note {
+				color: #969696;
+				font-size: 9pt;
+				line-height: 1.5;
+				margin: 4px 12px 12px 0;
+				padding-left: 100px;
+			}
+			.note code {
+				color: #d8d8d8;
+				background: #2d2d2d;
+				padding: 1px 4px;
+				border-radius: 3px;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="note" style="padding-left: 0">
+			PowerShell で <code>claude</code> を一度起動してログインしてください。
+			<code>%USERPROFILE%\.claude\.credentials.json</code> を自動で読み、期限が切れたら自動で更新します。
+			<code>claude setup-token</code> のトークンは <code>user:profile</code> 権限が無いため使えません。
+		</div>
+
+		<sdpi-item label="トークン（任意）">
+			<sdpi-password setting="apiToken" placeholder="通常は空欄のまま"></sdpi-password>
+		</sdpi-item>
+		<div class="note">別のアカウントの OAuth トークンを使いたいときだけ入力します。</div>
+
+		<sdpi-item label="更新間隔">
+			<sdpi-select setting="pollInterval" default="180">
+				<option value="60">1 分</option>
+				<option value="120">2 分</option>
+				<option value="180">3 分</option>
+				<option value="300">5 分</option>
+				<option value="600">10 分</option>
+			</sdpi-select>
+		</sdpi-item>
+		<div class="note">使用量 API は短い間隔で叩くと弾かれます。3 分以上をおすすめします。</div>
+
+		<sdpi-item label="表示">
+			<sdpi-select setting="displayMode" default="remaining">
+				<option value="remaining">残り %</option>
+				<option value="used">使用 %</option>
+			</sdpi-select>
+		</sdpi-item>
+
+		<sdpi-item label="押したとき">
+			<sdpi-select setting="pressAction" default="cycle">
+				<option value="cycle">短押しで表示切替 / 長押しでアプリ起動</option>
+				<option value="both">アプリ起動 + 即時更新</option>
+				<option value="open">アプリ起動のみ</option>
+				<option value="refresh">即時更新のみ</option>
+			</sdpi-select>
+		</sdpi-item>
+		<div class="note">短押しすると下段が 7D → FABLE → … と切り替わります（枠がある場合）。</div>
+
+		<sdpi-item label="起動コマンド">
+			<sdpi-textfield setting="launchCommand" placeholder="空欄で自動検出"></sdpi-textfield>
+		</sdpi-item>
+		<div class="note">
+			空欄なら Claude デスクトップアプリを自動で探します。別のものを開きたいときだけ、
+			<code>"C:\Path\App.exe"</code> のように入力してください。
+		</div>
+
+		<div class="note" style="padding-left: 0; margin-top: 16px">
+			上段が 5 時間ウィンドウ、下段が週ウィンドウ。バーの下の時間はリセットまでの残りです。
+		</div>
+	</body>
+</html>
