@@ -38,8 +38,14 @@ Claude の残量を Stream Deck のキー 1 枚に表示します。上段が 5 
 ## 認証
 
 PowerShell で `claude` を一度起動してログインしてください。プラグインは
-`%USERPROFILE%\.claude\.credentials.json` を読み、期限が切れたら自分でリフレッシュして
-同じファイルに書き戻します（CLI 側もそのまま使えます）。
+`%USERPROFILE%\.claude\.credentials.json` を読むだけで、書き換えることも、
+認証サーバーへ自分で問い合わせることもしません。アクセストークンの残りが 10 分を切ると、
+`claude -p /usage` を画面に出さずに実行します（最短 30 分おき）。`/usage` は有効な
+トークンを必要とする組み込みコマンドで、モデルの利用枠は消費しません。これで
+Claude Code が自分の正規の手順でトークンを更新・保存し、プラグインはそれを読み直します。
+
+それでも更新できないとき（長くオフラインだった等）はキーに `AUTH EXPIRED` が出ます。
+押すとターミナルで `claude` が開くので、その場でログインしてください。
 
 > `claude setup-token` で発行したトークンは**使えません**。推論用のスコープしか持たず、
 > 使用量エンドポイントに `OAuth token does not meet scope requirement user:profile`

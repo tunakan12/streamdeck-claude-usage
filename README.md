@@ -37,9 +37,16 @@ If your plan has model‑scoped weekly windows (Opus, Sonnet, Fable, …), a **s
 
 ## Authentication
 
-Run `claude` once in PowerShell and log in. The plugin then reads
-`%USERPROFILE%\.claude\.credentials.json` and refreshes the token itself when it
-expires, writing the new pair back so the CLI keeps working.
+Run `claude` once in PowerShell and log in. The plugin reads
+`%USERPROFILE%\.claude\.credentials.json` but never writes it and never talks to
+the sign-in server itself. When the access token is within 10 minutes of expiring,
+it runs `claude -p /usage` in the background (hidden, at most once every 30
+minutes). `/usage` is a built-in command that needs a valid token and uses no model
+quota, so Claude Code refreshes its own token the normal way and saves it; the
+plugin then reads the new one.
+
+If that ever fails — for example after a long time offline — the key shows
+`AUTH EXPIRED`; press it and a terminal opens with `claude` so you can sign in.
 
 > A token from `claude setup-token` will **not** work. It is scoped for inference
 > only and the usage endpoint rejects it with

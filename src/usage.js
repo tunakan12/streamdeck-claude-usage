@@ -1,11 +1,17 @@
-import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
-const TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
-const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const UA = "claude-code/2.1.241";
+
+/** トークンの残りがこれを切ったら、Claude Code に更新させる */
+const REFRESH_AHEAD_MS = 10 * 60_000;
+/** Claude Code を裏で起動するのは、最短でもこの間隔をあける */
+const HELPER_COOLDOWN_MS = 30 * 60_000;
+/** 裏で起動した Claude Code を待つ上限 */
+const HELPER_TIMEOUT_MS = 90_000;
 
 export function claudeHome() {
 	return process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
@@ -15,88 +21,131 @@ function credentialsPath() {
 	return path.join(claudeHome(), ".credentials.json");
 }
 
+/** Claude Code が保存した認証情報を読む（書き換えはしない） */
 function readCredentials() {
 	const file = credentialsPath();
-	if (!existsSync(file)) return null;
+	if (!existsSync(file)) return { exists: false, file };
 
 	try {
-		const raw = JSON.parse(readFileSync(file, "utf8"));
-		return raw?.claudeAiOauth?.accessToken ? { file, raw } : null;
+		const oauth = JSON.parse(readFileSync(file, "utf8"))?.claudeAiOauth;
+		return {
+			exists: true,
+			file,
+			accessToken: oauth?.accessToken ?? null,
+			expiresAt: Number.isFinite(oauth?.expiresAt) ? oauth.expiresAt : null,
+			modifiedAt: statSync(file).mtimeMs,
+		};
 	} catch {
-		return null;
+		return { exists: true, file, accessToken: null, expiresAt: null, modifiedAt: null };
 	}
 }
 
+function minutesLeft(creds) {
+	return creds.expiresAt == null ? null : Math.round((creds.expiresAt - Date.now()) / 60_000);
+}
+
+function isFresh(creds) {
+	return Boolean(creds.accessToken) && (creds.expiresAt == null || creds.expiresAt - Date.now() > REFRESH_AHEAD_MS);
+}
+
+/* ------------------------------------------------------------------ */
+/* Claude Code 自身にトークンを更新させる                              */
+/* ------------------------------------------------------------------ */
+
+let helperRunning = null;
+let helperLastRun = 0;
+
+function claudeExecutable() {
+	const native = path.join(os.homedir(), ".local", "bin", "claude.exe");
+	return existsSync(native) ? { cmd: native, shell: false } : { cmd: "claude", shell: true };
+}
+
 /**
- * 期限切れのときだけリフレッシュし、結果を同じファイルに書き戻す。
- * 書き戻さないと Claude Code 側のリフレッシュトークンが無効になるため、ここは必須。
+ * `claude -p /usage` を画面に出さずに実行する。
+ * /usage は推論を使わない組み込みコマンドで、有効なトークンを必要とするため、
+ * Claude Code が自分の正規の手順でトークンを更新し、保存してから終了する。
+ * プラグインが認証サーバーへ直接リクエストを送ることはない。
  */
-async function refreshCredentials(entry, logger) {
-	const oauth = entry.raw.claudeAiOauth;
-	if (!oauth?.refreshToken) {
-		logger?.warn("token refresh: no refresh token in credentials");
-		return null;
+function runClaudeUsage(logger) {
+	if (helperRunning) return helperRunning;
+
+	if (Date.now() - helperLastRun < HELPER_COOLDOWN_MS) {
+		logger?.info(`refresh via Claude Code: skipped (cooldown, last run ${Math.round((Date.now() - helperLastRun) / 60_000)} min ago)`);
+		return Promise.resolve(false);
 	}
 
-	const res = await fetch(TOKEN_URL, {
-		method: "POST",
-		headers: { "Content-Type": "application/json", "User-Agent": "anthropic" },
-		body: JSON.stringify({ grant_type: "refresh_token", refresh_token: oauth.refreshToken, client_id: CLIENT_ID }),
-		signal: AbortSignal.timeout(15_000),
+	helperLastRun = Date.now();
+	const { cmd, shell } = claudeExecutable();
+	logger?.info(`refresh via Claude Code: running ${shell ? "claude" : cmd} -p /usage`);
+
+	helperRunning = new Promise((resolve) => {
+		let stderr = "";
+		let settled = false;
+		let timer = null;
+		const done = (ok, why) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			logger?.info(`refresh via Claude Code: ${ok ? "finished" : "failed"} (${why})`);
+			resolve(ok);
+		};
+
+		let child;
+		try {
+			child = spawn(cmd, ["-p", "/usage"], { shell, windowsHide: true, cwd: os.tmpdir(), stdio: ["ignore", "ignore", "pipe"] });
+		} catch (err) {
+			done(false, err?.message ?? String(err));
+			return;
+		}
+
+		child.stderr?.on("data", (d) => {
+			stderr = (stderr + d.toString()).slice(-400);
+		});
+		child.on("error", (err) => done(false, err.message));
+		child.on("exit", (code) => done(code === 0, `exit ${code}${stderr ? `: ${stderr.trim().split("\n").pop()}` : ""}`));
+
+		timer = setTimeout(() => {
+			if (settled) return;
+			child.kill();
+			done(false, "timeout");
+		}, HELPER_TIMEOUT_MS);
+	}).finally(() => {
+		helperRunning = null;
 	});
 
-	if (!res.ok) {
-		// 次に同じことが起きたとき原因が分かるように、理由を残す
-		const body = await res.text().catch(() => "");
-		logger?.warn(`token refresh: HTTP ${res.status} ${body.slice(0, 200)}`);
-		return null;
-	}
-
-	const json = await res.json();
-	if (!json?.access_token) {
-		logger?.warn("token refresh: response had no access_token");
-		return null;
-	}
-
-	entry.raw.claudeAiOauth = {
-		...oauth,
-		accessToken: json.access_token,
-		refreshToken: json.refresh_token ?? oauth.refreshToken,
-		expiresAt: Date.now() + Number(json.expires_in ?? 3600) * 1000,
-		scopes: json.scope ? json.scope.split(" ") : oauth.scopes,
-	};
-
-	// 書き込み途中で壊さないよう、一時ファイル経由で置き換える
-	const tmp = `${entry.file}.tmp`;
-	writeFileSync(tmp, JSON.stringify(entry.raw, null, 2), { mode: 0o600 });
-	renameSync(tmp, entry.file);
-
-	logger?.info(`token refresh: ok, valid for ${Math.round(Number(json.expires_in ?? 3600) / 60)} min`);
-
-	return entry.raw.claudeAiOauth.accessToken;
+	return helperRunning;
 }
 
 /**
- * Claude Code のログイン情報からアクセストークンを取る（必要ならリフレッシュ）。
- * 「認証情報が無い」のか「あるが更新に失敗した」のかを呼び出し側に伝える。
+ * 使えるアクセストークンを返す。
+ * 期限が近ければ Claude Code に更新させてから読み直す。
  */
 async function tokenFromCredentials(logger) {
-	const entry = readCredentials();
-	if (!entry) return { token: null, hadCredentials: false };
+	let creds = readCredentials();
 
-	const oauth = entry.raw.claudeAiOauth;
-	const alive = !Number.isFinite(oauth.expiresAt) || oauth.expiresAt > Date.now() + 60_000;
-	if (alive) return { token: oauth.accessToken, hadCredentials: true };
-
-	logger?.info("access token expired, refreshing");
-
-	try {
-		return { token: await refreshCredentials(entry, logger), hadCredentials: true };
-	} catch (err) {
-		logger?.warn(`token refresh threw: ${err?.message ?? err}`);
-		return { token: null, hadCredentials: true };
+	if (!creds.exists) {
+		logger?.warn(`credentials not found: ${creds.file}`);
+		return { token: null, hadCredentials: false };
 	}
+
+	if (isFresh(creds)) return { token: creds.accessToken, hadCredentials: true };
+
+	logger?.info(`access token ${minutesLeft(creds) ?? "?"} min left, asking Claude Code to refresh it`);
+
+	await runClaudeUsage(logger);
+	creds = readCredentials();
+
+	if (creds.accessToken && (creds.expiresAt == null || creds.expiresAt > Date.now())) {
+		logger?.info(`access token now ${minutesLeft(creds) ?? "?"} min left`);
+		return { token: creds.accessToken, hadCredentials: true };
+	}
+
+	return { token: null, hadCredentials: creds.exists };
 }
+
+/* ------------------------------------------------------------------ */
+/* 使用量 API                                                          */
+/* ------------------------------------------------------------------ */
 
 function pct(value) {
 	const n = Number(value);
@@ -138,7 +187,7 @@ function parse(json) {
 	const windows = list
 		.filter((l) => l.group === "weekly")
 		.map((l, i) => ({
-			key: l.kind === "weekly_all" ? "all" : (labelFor(l).toLowerCase() || `w${i}`),
+			key: l.kind === "weekly_all" ? "all" : labelFor(l).toLowerCase() || `w${i}`,
 			label: labelFor(l),
 			remaining: pct(l.percent),
 			resetAt: parseReset(l.resets_at),
@@ -199,7 +248,22 @@ export async function getClaudeUsage(manualToken, logger) {
 	}
 
 	const { token, hadCredentials } = await tokenFromCredentials(logger);
-	if (token && token !== manual) return await requestUsage(token);
+
+	if (token && token !== manual) {
+		try {
+			return await requestUsage(token);
+		} catch (err) {
+			// 期限内のはずなのに弾かれた（取り消された等）→ Claude Code に一度だけ更新させる
+			if (!err.authProblem || err.scopeProblem) throw err;
+
+			logger?.info("usage API rejected the token, asking Claude Code to refresh it");
+			if (await runClaudeUsage(logger)) {
+				const again = readCredentials();
+				if (again.accessToken && again.accessToken !== token) return await requestUsage(again.accessToken);
+			}
+			throw err;
+		}
+	}
 
 	if (firstError) throw new Error(firstError.scopeProblem ? "SCOPE" : "UNAUTHORIZED");
 
